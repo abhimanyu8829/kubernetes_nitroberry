@@ -1,0 +1,121 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: auth-api
+  namespace: auth-namespace
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: auth-api
+  template:
+    metadata:
+      labels:
+        app: auth-api
+    spec:
+      containers:
+      - name: api
+        image: nitroberry/auth-api:latest # Placeholder
+        ports:
+        - containerPort: 8080
+        env:
+        - name: DATABASE_URL
+          value: "postgres://postgres:nitroberry-secret-password@postgres-service.database-namespace.svc.cluster.local:5432/postgres?options=-csearch_path%3Dauth"
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: auth-api-service
+  namespace: auth-namespace
+spec:
+  selector:
+    app: auth-api
+  ports:
+  - protocol: TCP
+    port: 8080
+    targetPort: 8080
+---
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: auth-api-hpa
+  namespace: auth-namespace
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: auth-api
+  minReplicas: 2
+  maxReplicas: 10
+  metrics:
+  - type: Resource
+    resource:
+      name: cpu
+      target:
+        type: Utilization
+        averageUtilization: 70
+---
+apiVersion: traefik.io/v1alpha1
+kind: IngressRoute
+metadata:
+  name: auth-api-websecure
+  namespace: auth-namespace
+spec:
+  entryPoints:
+    - websecure
+  routes:
+    # Public Paths (No JWT)
+    - match: Host(`auth.nitroberry.com`) && (PathPrefix(`/login`) || PathPrefix(`/health`) || PathPrefix(`/public`))
+      kind: Rule
+      services:
+        - name: auth-api-service
+          port: 8080
+      middlewares:
+        - name: rate-limit
+          namespace: traefik-ingress
+        - name: security-headers
+          namespace: traefik-ingress
+    # Protected Paths (JWT Required)
+    - match: Host(`auth.nitroberry.com`)
+      kind: Rule
+      services:
+        - name: auth-api-service
+          port: 8080
+      middlewares:
+        - name: jwt-auth
+          namespace: traefik-ingress
+        - name: rate-limit
+          namespace: traefik-ingress
+        - name: security-headers
+          namespace: traefik-ingress
+  tls:
+    certResolver: myresolver
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: auth-api-policy
+  namespace: auth-namespace
+spec:
+  podSelector:
+    matchLabels:
+      app: auth-api
+  policyTypes:
+  - Ingress
+  - Egress
+  ingress:
+  - from:
+    - namespaceSelector:
+        matchLabels:
+          kubernetes.io/metadata.name: traefik-ingress
+    ports:
+    - protocol: TCP
+      port: 8080
+  egress:
+  - to:
+    - namespaceSelector:
+        matchLabels:
+          kubernetes.io/metadata.name: database-namespace
+    ports:
+    - protocol: TCP
+      port: 5432

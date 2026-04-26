@@ -1,0 +1,119 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: orders-api
+  namespace: orders-namespace
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: orders-api
+  template:
+    metadata:
+      labels:
+        app: orders-api
+    spec:
+      containers:
+      - name: api
+        image: nitroberry/orders-api:latest
+        ports:
+        - containerPort: 8080
+        env:
+        - name: DATABASE_URL
+          value: "postgres://postgres:nitroberry-secret-password@postgres-service.database-namespace.svc.cluster.local:5432/postgres?options=-csearch_path%3Dorders"
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: orders-api-service
+  namespace: orders-namespace
+spec:
+  selector:
+    app: orders-api
+  ports:
+  - protocol: TCP
+    port: 8080
+    targetPort: 8080
+---
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: orders-api-hpa
+  namespace: orders-namespace
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: orders-api
+  minReplicas: 2
+  maxReplicas: 10
+  metrics:
+  - type: Resource
+    resource:
+      name: cpu
+      target:
+        type: Utilization
+        averageUtilization: 70
+---
+apiVersion: traefik.io/v1alpha1
+kind: IngressRoute
+metadata:
+  name: orders-api-websecure
+  namespace: orders-namespace
+spec:
+  entryPoints:
+    - websecure
+  routes:
+    - match: Host(`orders.nitroberry.com`) && (PathPrefix(`/health`) || PathPrefix(`/public`))
+      kind: Rule
+      services:
+        - name: orders-api-service
+          port: 8080
+      middlewares:
+        - name: rate-limit
+          namespace: traefik-ingress
+        - name: security-headers
+          namespace: traefik-ingress
+    - match: Host(`orders.nitroberry.com`)
+      kind: Rule
+      services:
+        - name: orders-api-service
+          port: 8080
+      middlewares:
+        - name: jwt-auth
+          namespace: traefik-ingress
+        - name: rate-limit
+          namespace: traefik-ingress
+        - name: security-headers
+          namespace: traefik-ingress
+  tls:
+    certResolver: myresolver
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: orders-api-policy
+  namespace: orders-namespace
+spec:
+  podSelector:
+    matchLabels:
+      app: orders-api
+  policyTypes:
+  - Ingress
+  - Egress
+  ingress:
+  - from:
+    - namespaceSelector:
+        matchLabels:
+          kubernetes.io/metadata.name: traefik-ingress
+    ports:
+    - protocol: TCP
+      port: 8080
+  egress:
+  - to:
+    - namespaceSelector:
+        matchLabels:
+          kubernetes.io/metadata.name: database-namespace
+    ports:
+    - protocol: TCP
+      port: 5432
