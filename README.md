@@ -1546,7 +1546,6 @@ Contributions are welcome! Please follow these guidelines:
 
 <div align="center">
 
-**Built with ❤️ for production Kubernetes deployments**
 
 [⬆ Back to Top](#nitroberry--production-ready-kubernetes-microservices-architecture)
 
