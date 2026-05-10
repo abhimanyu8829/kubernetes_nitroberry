@@ -1,0 +1,202 @@
+# =============================================================
+# 14-postgres-s3-backup.yaml
+# Nightly pg_dumpall → gzip → upload to AWS S3.
+#
+# SETUP:
+#   1. Create your S3 bucket with versioning enabled:
+#      aws s3api create-bucket --bucket nitroberry-db-backups --region us-east-1
+#      aws s3api put-bucket-versioning \
+#        --bucket nitroberry-db-backups \
+#        --versioning-configuration Status=Enabled
+#
+#   2. Fill in AWS credentials in 12-secrets.yaml and apply it first.
+#
+#   3. Apply this file:
+#      kubectl apply -f 14-postgres-s3-backup.yaml
+#
+#   4. To trigger manually (test):
+#      kubectl create job --from=cronjob/postgres-s3-backup manual-backup-001 -n database-namespace
+#
+#   5. Check backup logs:
+#      kubectl logs -n database-namespace -l job-name=manual-backup-001
+#
+# SCHEDULE: Daily at 02:00 UTC. Adjust spec.schedule as needed.
+# RETENTION: S3 Lifecycle rule recommended — expire after 30 days.
+# =============================================================
+
+# ServiceAccount with minimal permissions for the backup job
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: postgres-backup-sa
+  namespace: database-namespace
+  labels:
+    managed-by: nitroberry
+
+---
+# ConfigMap with backup configuration
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: backup-config
+  namespace: database-namespace
+  labels:
+    managed-by: nitroberry
+data:
+  PGHOST: "postgres-service.database-namespace.svc.cluster.local"
+  PGPORT: "5432"
+  PGUSER: "postgres"
+  PGDATABASE: "postgres"
+  BACKUP_PREFIX: "nitroberry"
+  # S3 path: s3://BUCKET/BACKUP_PREFIX/YYYY-MM-DD_HH-MM-SS.sql.gz
+  S3_PATH_PREFIX: "backups"
+
+---
+# The CronJob — runs pg_dumpall, gzips, uploads to S3
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: postgres-s3-backup
+  namespace: database-namespace
+  labels:
+    managed-by: nitroberry
+spec:
+  schedule: "0 2 * * *"          # 02:00 UTC daily
+  timeZone: "UTC"
+  concurrencyPolicy: Forbid       # never run 2 backups at once
+  successfulJobsHistoryLimit: 7   # keep last 7 successful job records
+  failedJobsHistoryLimit: 3       # keep last 3 failed job records
+  startingDeadlineSeconds: 300    # if missed by 5 min, skip
+  jobTemplate:
+    spec:
+      backoffLimit: 2             # retry twice on failure
+      activeDeadlineSeconds: 1800 # kill job if it runs > 30 min
+      template:
+        metadata:
+          labels:
+            app: postgres-backup
+        spec:
+          serviceAccountName: postgres-backup-sa
+          restartPolicy: OnFailure
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 999        # postgres user in alpine image
+            fsGroup: 999
+          containers:
+            - name: backup
+              image: postgres:15-alpine
+              command:
+                - /bin/sh
+                - -c
+                - |
+                  set -e
+
+                  # Install AWS CLI (lightweight via pip)
+                  apk add --no-cache python3 py3-pip curl > /dev/null 2>&1
+                  pip3 install awscli --quiet --break-system-packages
+
+                  # Build filename with timestamp
+                  TIMESTAMP=$(date +%Y-%m-%d_%H-%M-%S)
+                  FILENAME="${BACKUP_PREFIX}_${TIMESTAMP}.sql.gz"
+                  S3_KEY="${S3_PATH_PREFIX}/${FILENAME}"
+
+                  echo "[$(date)] Starting backup: ${FILENAME}"
+
+                  # Dump all databases, gzip, stream directly to S3
+                  pg_dumpall \
+                    --host="${PGHOST}" \
+                    --port="${PGPORT}" \
+                    --username="${PGUSER}" \
+                    --no-password \
+                    --clean \
+                    --if-exists \
+                  | gzip \
+                  | aws s3 cp - "s3://${S3_BUCKET}/${S3_KEY}" \
+                      --storage-class STANDARD_IA \
+                      --expected-size 10000000
+
+                  echo "[$(date)] ✅ Backup complete: s3://${S3_BUCKET}/${S3_KEY}"
+
+                  # List recent backups for confirmation
+                  echo "[$(date)] Recent backups in bucket:"
+                  aws s3 ls "s3://${S3_BUCKET}/${S3_PATH_PREFIX}/" \
+                    --human-readable \
+                    | tail -10
+              # Non-sensitive config from ConfigMap
+              envFrom:
+                - configMapRef:
+                    name: backup-config
+              # Sensitive AWS credentials + DB password from Secret
+              env:
+                - name: PGPASSWORD
+                  valueFrom:
+                    secretKeyRef:
+                      name: postgres-credentials
+                      key: postgres-password
+                - name: AWS_ACCESS_KEY_ID
+                  valueFrom:
+                    secretKeyRef:
+                      name: aws-s3-backup-credentials
+                      key: AWS_ACCESS_KEY_ID
+                - name: AWS_SECRET_ACCESS_KEY
+                  valueFrom:
+                    secretKeyRef:
+                      name: aws-s3-backup-credentials
+                      key: AWS_SECRET_ACCESS_KEY
+                - name: AWS_DEFAULT_REGION
+                  valueFrom:
+                    secretKeyRef:
+                      name: aws-s3-backup-credentials
+                      key: AWS_DEFAULT_REGION
+                - name: S3_BUCKET
+                  valueFrom:
+                    secretKeyRef:
+                      name: aws-s3-backup-credentials
+                      key: S3_BUCKET
+              resources:
+                requests:
+                  cpu: "100m"
+                  memory: "256Mi"
+                limits:
+                  cpu: "500m"
+                  memory: "512Mi"
+              securityContext:
+                allowPrivilegeEscalation: false
+                capabilities:
+                  drop: ["ALL"]
+
+---
+# NetworkPolicy: backup pod can reach postgres + internet (for S3)
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: backup-network-policy
+  namespace: database-namespace
+  labels:
+    managed-by: nitroberry
+spec:
+  podSelector:
+    matchLabels:
+      app: postgres-backup
+  policyTypes:
+    - Ingress
+    - Egress
+  ingress: []                     # no inbound traffic needed
+  egress:
+    - to:
+        - podSelector:
+            matchLabels:
+              app: postgres
+      ports:
+        - protocol: TCP
+          port: 5432
+    - to:                         # allow S3 (internet egress)
+        - ipBlock:
+            cidr: 0.0.0.0/0
+            except:
+              - 10.0.0.0/8
+              - 172.16.0.0/12
+              - 192.168.0.0/16
+      ports:
+        - protocol: TCP
+          port: 443

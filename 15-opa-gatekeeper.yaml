@@ -1,0 +1,318 @@
+# =============================================================
+# 15-opa-gatekeeper.yaml
+# OPA Gatekeeper policies for the Nitroberry cluster.
+#
+# INSTALL GATEKEEPER FIRST (one-time):
+#   kubectl apply -f https://raw.githubusercontent.com/open-policy-agent/gatekeeper/release-3.14/deploy/gatekeeper.yaml
+#
+# Then apply this file:
+#   kubectl apply -f 15-opa-gatekeeper.yaml
+#
+# Verify policies:
+#   kubectl get constrainttemplates
+#   kubectl get constraints
+#
+# POLICIES ENFORCED:
+#   1. RequireResourceLimits      — all containers must have CPU + memory limits
+#   2. RequireLabels              — all pods must have 'app' and 'managed-by' labels
+#   3. BlockPrivilegedContainers  — no privileged: true containers
+#   4. BlockRootContainers        — runAsNonRoot must be true
+#   5. RequireReadOnlyRootFS      — readOnlyRootFilesystem must be true
+#   6. BlockLatestTag             — no image:latest tags in production namespaces
+# =============================================================
+
+# ── 1. RequireResourceLimits ──────────────────────────────────
+apiVersion: templates.gatekeeper.sh/v1
+kind: ConstraintTemplate
+metadata:
+  name: requireresourcelimits
+  labels:
+    managed-by: nitroberry
+spec:
+  crd:
+    spec:
+      names:
+        kind: RequireResourceLimits
+  targets:
+    - target: admission.k8s.gatekeeper.sh
+      rego: |
+        package requireresourcelimits
+
+        violation[{"msg": msg}] {
+          container := input.review.object.spec.containers[_]
+          not container.resources.limits.cpu
+          msg := sprintf("Container '%v' must have a CPU limit set", [container.name])
+        }
+
+        violation[{"msg": msg}] {
+          container := input.review.object.spec.containers[_]
+          not container.resources.limits.memory
+          msg := sprintf("Container '%v' must have a memory limit set", [container.name])
+        }
+
+        violation[{"msg": msg}] {
+          container := input.review.object.spec.containers[_]
+          not container.resources.requests.cpu
+          msg := sprintf("Container '%v' must have a CPU request set", [container.name])
+        }
+
+        violation[{"msg": msg}] {
+          container := input.review.object.spec.containers[_]
+          not container.resources.requests.memory
+          msg := sprintf("Container '%v' must have a memory request set", [container.name])
+        }
+---
+apiVersion: constraints.gatekeeper.sh/v1beta1
+kind: RequireResourceLimits
+metadata:
+  name: require-resource-limits
+  labels:
+    managed-by: nitroberry
+spec:
+  enforcementAction: deny
+  match:
+    kinds:
+      - apiGroups: ["apps"]
+        kinds: ["Deployment", "StatefulSet"]
+    namespaces:
+      - auth-namespace
+      - users-namespace
+      - orders-namespace
+      - products-namespace
+      - notify-namespace
+      - database-namespace
+
+---
+# ── 2. RequireLabels ──────────────────────────────────────────
+apiVersion: templates.gatekeeper.sh/v1
+kind: ConstraintTemplate
+metadata:
+  name: requirelabels
+  labels:
+    managed-by: nitroberry
+spec:
+  crd:
+    spec:
+      names:
+        kind: RequireLabels
+      validation:
+        openAPIV3Schema:
+          type: object
+          properties:
+            labels:
+              type: array
+              items:
+                type: string
+  targets:
+    - target: admission.k8s.gatekeeper.sh
+      rego: |
+        package requirelabels
+
+        violation[{"msg": msg}] {
+          required := input.parameters.labels[_]
+          not input.review.object.metadata.labels[required]
+          msg := sprintf("Pod is missing required label: '%v'", [required])
+        }
+---
+apiVersion: constraints.gatekeeper.sh/v1beta1
+kind: RequireLabels
+metadata:
+  name: require-pod-labels
+  labels:
+    managed-by: nitroberry
+spec:
+  enforcementAction: deny
+  match:
+    kinds:
+      - apiGroups: ["apps"]
+        kinds: ["Deployment"]
+    namespaces:
+      - auth-namespace
+      - users-namespace
+      - orders-namespace
+      - products-namespace
+      - notify-namespace
+  parameters:
+    labels:
+      - "app"
+      - "managed-by"
+
+---
+# ── 3. BlockPrivilegedContainers ──────────────────────────────
+apiVersion: templates.gatekeeper.sh/v1
+kind: ConstraintTemplate
+metadata:
+  name: blockprivilegedcontainers
+  labels:
+    managed-by: nitroberry
+spec:
+  crd:
+    spec:
+      names:
+        kind: BlockPrivilegedContainers
+  targets:
+    - target: admission.k8s.gatekeeper.sh
+      rego: |
+        package blockprivilegedcontainers
+
+        violation[{"msg": msg}] {
+          container := input.review.object.spec.containers[_]
+          container.securityContext.privileged == true
+          msg := sprintf("Container '%v' must not run as privileged", [container.name])
+        }
+---
+apiVersion: constraints.gatekeeper.sh/v1beta1
+kind: BlockPrivilegedContainers
+metadata:
+  name: block-privileged-containers
+  labels:
+    managed-by: nitroberry
+spec:
+  enforcementAction: deny
+  match:
+    kinds:
+      - apiGroups: ["apps"]
+        kinds: ["Deployment", "StatefulSet", "DaemonSet"]
+    namespaces:
+      - auth-namespace
+      - users-namespace
+      - orders-namespace
+      - products-namespace
+      - notify-namespace
+      - database-namespace
+      - traefik-ingress
+
+---
+# ── 4. BlockRootContainers ────────────────────────────────────
+apiVersion: templates.gatekeeper.sh/v1
+kind: ConstraintTemplate
+metadata:
+  name: blockrootcontainers
+  labels:
+    managed-by: nitroberry
+spec:
+  crd:
+    spec:
+      names:
+        kind: BlockRootContainers
+  targets:
+    - target: admission.k8s.gatekeeper.sh
+      rego: |
+        package blockrootcontainers
+
+        violation[{"msg": msg}] {
+          not input.review.object.spec.securityContext.runAsNonRoot == true
+          msg := "Pod must set securityContext.runAsNonRoot: true"
+        }
+---
+apiVersion: constraints.gatekeeper.sh/v1beta1
+kind: BlockRootContainers
+metadata:
+  name: block-root-containers
+  labels:
+    managed-by: nitroberry
+spec:
+  enforcementAction: deny
+  match:
+    kinds:
+      - apiGroups: ["apps"]
+        kinds: ["Deployment", "StatefulSet"]
+    namespaces:
+      - auth-namespace
+      - users-namespace
+      - orders-namespace
+      - products-namespace
+      - notify-namespace
+
+---
+# ── 5. RequireReadOnlyRootFS ──────────────────────────────────
+apiVersion: templates.gatekeeper.sh/v1
+kind: ConstraintTemplate
+metadata:
+  name: requirereadonlyrootfs
+  labels:
+    managed-by: nitroberry
+spec:
+  crd:
+    spec:
+      names:
+        kind: RequireReadOnlyRootFS
+  targets:
+    - target: admission.k8s.gatekeeper.sh
+      rego: |
+        package requirereadonlyrootfs
+
+        violation[{"msg": msg}] {
+          container := input.review.object.spec.containers[_]
+          not container.securityContext.readOnlyRootFilesystem == true
+          msg := sprintf("Container '%v' must set readOnlyRootFilesystem: true", [container.name])
+        }
+---
+apiVersion: constraints.gatekeeper.sh/v1beta1
+kind: RequireReadOnlyRootFS
+metadata:
+  name: require-readonly-rootfs
+  labels:
+    managed-by: nitroberry
+spec:
+  enforcementAction: deny
+  match:
+    kinds:
+      - apiGroups: ["apps"]
+        kinds: ["Deployment"]
+    namespaces:
+      - auth-namespace
+      - users-namespace
+      - orders-namespace
+      - products-namespace
+      - notify-namespace
+
+---
+# ── 6. BlockLatestTag ─────────────────────────────────────────
+apiVersion: templates.gatekeeper.sh/v1
+kind: ConstraintTemplate
+metadata:
+  name: blocklatesttag
+  labels:
+    managed-by: nitroberry
+spec:
+  crd:
+    spec:
+      names:
+        kind: BlockLatestTag
+  targets:
+    - target: admission.k8s.gatekeeper.sh
+      rego: |
+        package blocklatestag
+
+        violation[{"msg": msg}] {
+          container := input.review.object.spec.containers[_]
+          endswith(container.image, ":latest")
+          msg := sprintf("Container '%v' must not use ':latest' tag. Pin to a specific version.", [container.name])
+        }
+
+        violation[{"msg": msg}] {
+          container := input.review.object.spec.containers[_]
+          not contains(container.image, ":")
+          msg := sprintf("Container '%v' has no image tag. Pin to a specific version.", [container.name])
+        }
+---
+apiVersion: constraints.gatekeeper.sh/v1beta1
+kind: BlockLatestTag
+metadata:
+  name: block-latest-tag
+  labels:
+    managed-by: nitroberry
+spec:
+  enforcementAction: deny
+  match:
+    kinds:
+      - apiGroups: ["apps"]
+        kinds: ["Deployment", "StatefulSet"]
+    namespaces:
+      - auth-namespace
+      - users-namespace
+      - orders-namespace
+      - products-namespace
+      - notify-namespace
+      - database-namespace

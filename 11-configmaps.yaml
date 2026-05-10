@@ -1,0 +1,96 @@
+# =============================================================
+# 11-configmaps.yaml
+# Non-sensitive config for all 5 API services.
+# Sensitive values (DB password, JWT secret) live in 12-secrets.yaml
+# =============================================================
+
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: auth-api-config
+  namespace: auth-namespace
+  labels:
+    app: auth-api
+    managed-by: nitroberry
+data:
+  PORT: "8080"
+  DB_SCHEMA: "auth"
+  DB_HOST: "postgres-service.database-namespace.svc.cluster.local"
+  DB_PORT: "5432"
+  DB_NAME: "postgres"
+  DB_USER: "postgres"
+  JWT_ALGORITHM: "HS256"
+  LOG_LEVEL: "info"
+  ENV: "production"
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: users-api-config
+  namespace: users-namespace
+  labels:
+    app: users-api
+    managed-by: nitroberry
+data:
+  PORT: "8080"
+  DB_SCHEMA: "users"
+  DB_HOST: "postgres-service.database-namespace.svc.cluster.local"
+  DB_PORT: "5432"
+  DB_NAME: "postgres"
+  DB_USER: "postgres"
+  LOG_LEVEL: "info"
+  ENV: "production"
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: orders-api-config
+  namespace: orders-namespace
+  labels:
+    app: orders-api
+    managed-by: nitroberry
+data:
+  PORT: "8080"
+  DB_SCHEMA: "orders"
+  DB_HOST: "postgres-service.database-namespace.svc.cluster.local"
+  DB_PORT: "5432"
+  DB_NAME: "postgres"
+  DB_USER: "postgres"
+  LOG_LEVEL: "info"
+  ENV: "production"
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: products-api-config
+  namespace: products-namespace
+  labels:
+    app: products-api
+    managed-by: nitroberry
+data:
+  PORT: "8080"
+  DB_SCHEMA: "products"
+  DB_HOST: "postgres-service.database-namespace.svc.cluster.local"
+  DB_PORT: "5432"
+  DB_NAME: "postgres"
+  DB_USER: "postgres"
+  LOG_LEVEL: "info"
+  ENV: "production"
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: notify-api-config
+  namespace: notify-namespace
+  labels:
+    app: notify-api
+    managed-by: nitroberry
+data:
+  PORT: "8080"
+  DB_SCHEMA: "notify"
+  DB_HOST: "postgres-service.database-namespace.svc.cluster.local"
+  DB_PORT: "5432"
+  DB_NAME: "postgres"
+  DB_USER: "postgres"
+  LOG_LEVEL: "info"
+  ENV: "production"
