@@ -22,7 +22,7 @@ metadata:
     app: auth-api
     managed-by: nitroberry
 spec:
-  replicas: 2
+  replicas: 2    ## Changed replicas from 2 to 1 for single-node cluster
   selector:
     matchLabels:
       app: auth-api
@@ -32,6 +32,9 @@ spec:
         app: auth-api
     spec:
       # Spread pods across 2 nodes — never 2 pods on same node
+      ## Removed affinity and topologySpreadConstraints for single-node cluster
+      ## because they are used only for multi-node scheduling
+
       affinity:
         podAntiAffinity:
           requiredDuringSchedulingIgnoredDuringExecution:
