@@ -48,7 +48,7 @@ spec:
           whenUnsatisfiable: DoNotSchedule
           labelSelector:
             matchLabels:
-              app: auth-api
+              app: auth-api 
       securityContext:
         runAsNonRoot: true
         runAsUser: 1000
