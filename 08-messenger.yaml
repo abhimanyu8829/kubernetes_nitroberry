@@ -1,35 +1,43 @@
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: notify-api
-  namespace: notify-namespace
+  name: messenger-api
+  namespace: messenger-namespace
+  labels:
+    app: messenger-api
 spec:
   replicas: 2
   selector:
     matchLabels:
-      app: notify-api
+      app: messenger-api
   template:
     metadata:
       labels:
-        app: notify-api
+        app: messenger-api
     spec:
       containers:
       - name: api
-        image: nitroberry/notify-api:latest
+        image: 798701233691.dkr.ecr.ap-south-1.amazonaws.com/nitroberry/messenger-api:latest
         ports:
         - containerPort: 8080
+        envFrom:
+        - configMapRef:
+            name: messenger-api-config
         env:
         - name: DATABASE_URL
-          value: "postgres://postgres:nitroberry-secret-password@postgres-service.database-namespace.svc.cluster.local:5432/postgres?options=-csearch_path%3Dnotify"
+          valueFrom:
+            secretKeyRef:
+              name: messenger-api-secrets
+              key: database-url
 ---
 apiVersion: v1
 kind: Service
 metadata:
-  name: notify-api-service
-  namespace: notify-namespace
+  name: messenger-api-service
+  namespace: messenger-namespace
 spec:
   selector:
-    app: notify-api
+    app: messenger-api
   ports:
   - protocol: TCP
     port: 8080
@@ -38,13 +46,13 @@ spec:
 apiVersion: autoscaling/v2
 kind: HorizontalPodAutoscaler
 metadata:
-  name: notify-api-hpa
-  namespace: notify-namespace
+  name: messenger-api-hpa
+  namespace: messenger-namespace
 spec:
   scaleTargetRef:
     apiVersion: apps/v1
     kind: Deployment
-    name: notify-api
+    name: messenger-api
   minReplicas: 2
   maxReplicas: 10
   metrics:
@@ -58,30 +66,18 @@ spec:
 apiVersion: traefik.io/v1alpha1
 kind: IngressRoute
 metadata:
-  name: notify-api-websecure
-  namespace: notify-namespace
+  name: messenger-api-websecure
+  namespace: messenger-namespace
 spec:
   entryPoints:
     - websecure
   routes:
-    - match: Host(`notify.nitroberry.com`) && (PathPrefix(`/health`) || PathPrefix(`/public`))
+    - match: Host(`messenger.nitroberry.com`)
       kind: Rule
       services:
-        - name: notify-api-service
+        - name: messenger-api-service
           port: 8080
       middlewares:
-        - name: rate-limit
-          namespace: traefik-ingress
-        - name: security-headers
-          namespace: traefik-ingress
-    - match: Host(`notify.nitroberry.com`)
-      kind: Rule
-      services:
-        - name: notify-api-service
-          port: 8080
-      middlewares:
-        - name: jwt-auth
-          namespace: traefik-ingress
         - name: rate-limit
           namespace: traefik-ingress
         - name: security-headers
@@ -92,12 +88,12 @@ spec:
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
-  name: notify-api-policy
-  namespace: notify-namespace
+  name: messenger-api-policy
+  namespace: messenger-namespace
 spec:
   podSelector:
     matchLabels:
-      app: notify-api
+      app: messenger-api
   policyTypes:
   - Ingress
   - Egress

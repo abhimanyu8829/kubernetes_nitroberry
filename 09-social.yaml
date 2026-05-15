@@ -1,35 +1,54 @@
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: users-api
-  namespace: users-namespace
+  name: social-api
+  namespace: social-namespace
+  labels:
+    app: social-api
 spec:
   replicas: 2
   selector:
     matchLabels:
-      app: users-api
+      app: social-api
   template:
     metadata:
       labels:
-        app: users-api
+        app: social-api
     spec:
       containers:
       - name: api
-        image: nitroberry/users-api:latest
+        image: 798701233691.dkr.ecr.ap-south-1.amazonaws.com/nitroberry/social-api:latest
         ports:
         - containerPort: 8080
+        envFrom:
+        - configMapRef:
+            name: social-api-config
         env:
         - name: DATABASE_URL
-          value: "postgres://postgres:nitroberry-secret-password@postgres-service.database-namespace.svc.cluster.local:5432/postgres?options=-csearch_path%3Dusers"
+          valueFrom:
+            secretKeyRef:
+              name: social-api-secrets
+              key: database-url
+      - name: worker
+        image: 798701233691.dkr.ecr.ap-south-1.amazonaws.com/nitroberry/social-worker:latest
+        envFrom:
+        - configMapRef:
+            name: social-api-config
+        env:
+        - name: DATABASE_URL
+          valueFrom:
+            secretKeyRef:
+              name: social-api-secrets
+              key: database-url
 ---
 apiVersion: v1
 kind: Service
 metadata:
-  name: users-api-service
-  namespace: users-namespace
+  name: social-api-service
+  namespace: social-namespace
 spec:
   selector:
-    app: users-api
+    app: social-api
   ports:
   - protocol: TCP
     port: 8080
@@ -38,13 +57,13 @@ spec:
 apiVersion: autoscaling/v2
 kind: HorizontalPodAutoscaler
 metadata:
-  name: users-api-hpa
-  namespace: users-namespace
+  name: social-api-hpa
+  namespace: social-namespace
 spec:
   scaleTargetRef:
     apiVersion: apps/v1
     kind: Deployment
-    name: users-api
+    name: social-api
   minReplicas: 2
   maxReplicas: 10
   metrics:
@@ -58,30 +77,18 @@ spec:
 apiVersion: traefik.io/v1alpha1
 kind: IngressRoute
 metadata:
-  name: users-api-websecure
-  namespace: users-namespace
+  name: social-api-websecure
+  namespace: social-namespace
 spec:
   entryPoints:
     - websecure
   routes:
-    - match: Host(`users.nitroberry.com`) && (PathPrefix(`/health`) || PathPrefix(`/public`))
+    - match: Host(`social.nitroberry.com`)
       kind: Rule
       services:
-        - name: users-api-service
+        - name: social-api-service
           port: 8080
       middlewares:
-        - name: rate-limit
-          namespace: traefik-ingress
-        - name: security-headers
-          namespace: traefik-ingress
-    - match: Host(`users.nitroberry.com`)
-      kind: Rule
-      services:
-        - name: users-api-service
-          port: 8080
-      middlewares:
-        - name: jwt-auth
-          namespace: traefik-ingress
         - name: rate-limit
           namespace: traefik-ingress
         - name: security-headers
@@ -92,12 +99,12 @@ spec:
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
-  name: users-api-policy
-  namespace: users-namespace
+  name: social-api-policy
+  namespace: social-namespace
 spec:
   podSelector:
     matchLabels:
-      app: users-api
+      app: social-api
   policyTypes:
   - Ingress
   - Egress

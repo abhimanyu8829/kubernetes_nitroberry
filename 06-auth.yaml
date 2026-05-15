@@ -1,35 +1,54 @@
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: products-api
-  namespace: products-namespace
+  name: auth-api
+  namespace: auth-namespace
+  labels:
+    app: auth-api
 spec:
   replicas: 2
   selector:
     matchLabels:
-      app: products-api
+      app: auth-api
   template:
     metadata:
       labels:
-        app: products-api
+        app: auth-api
     spec:
       containers:
       - name: api
-        image: nitroberry/products-api:latest
+        image: 798701233691.dkr.ecr.ap-south-1.amazonaws.com/nitroberry/auth-api:latest
         ports:
         - containerPort: 8080
+        envFrom:
+        - configMapRef:
+            name: auth-api-config
         env:
         - name: DATABASE_URL
-          value: "postgres://postgres:nitroberry-secret-password@postgres-service.database-namespace.svc.cluster.local:5432/postgres?options=-csearch_path%3Dproducts"
+          valueFrom:
+            secretKeyRef:
+              name: auth-api-secrets
+              key: database-url
+      - name: worker
+        image: 798701233691.dkr.ecr.ap-south-1.amazonaws.com/nitroberry/auth-worker:latest
+        envFrom:
+        - configMapRef:
+            name: auth-api-config
+        env:
+        - name: DATABASE_URL
+          valueFrom:
+            secretKeyRef:
+              name: auth-api-secrets
+              key: database-url
 ---
 apiVersion: v1
 kind: Service
 metadata:
-  name: products-api-service
-  namespace: products-namespace
+  name: auth-api-service
+  namespace: auth-namespace
 spec:
   selector:
-    app: products-api
+    app: auth-api
   ports:
   - protocol: TCP
     port: 8080
@@ -38,13 +57,13 @@ spec:
 apiVersion: autoscaling/v2
 kind: HorizontalPodAutoscaler
 metadata:
-  name: products-api-hpa
-  namespace: products-namespace
+  name: auth-api-hpa
+  namespace: auth-namespace
 spec:
   scaleTargetRef:
     apiVersion: apps/v1
     kind: Deployment
-    name: products-api
+    name: auth-api
   minReplicas: 2
   maxReplicas: 10
   metrics:
@@ -58,30 +77,18 @@ spec:
 apiVersion: traefik.io/v1alpha1
 kind: IngressRoute
 metadata:
-  name: products-api-websecure
-  namespace: products-namespace
+  name: auth-api-websecure
+  namespace: auth-namespace
 spec:
   entryPoints:
     - websecure
   routes:
-    - match: Host(`products.nitroberry.com`) && (PathPrefix(`/health`) || PathPrefix(`/public`))
+    - match: Host(`auth.nitroberry.com`)
       kind: Rule
       services:
-        - name: products-api-service
+        - name: auth-api-service
           port: 8080
       middlewares:
-        - name: rate-limit
-          namespace: traefik-ingress
-        - name: security-headers
-          namespace: traefik-ingress
-    - match: Host(`products.nitroberry.com`)
-      kind: Rule
-      services:
-        - name: products-api-service
-          port: 8080
-      middlewares:
-        - name: jwt-auth
-          namespace: traefik-ingress
         - name: rate-limit
           namespace: traefik-ingress
         - name: security-headers
@@ -92,12 +99,12 @@ spec:
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
-  name: products-api-policy
-  namespace: products-namespace
+  name: auth-api-policy
+  namespace: auth-namespace
 spec:
   podSelector:
     matchLabels:
-      app: products-api
+      app: auth-api
   policyTypes:
   - Ingress
   - Egress

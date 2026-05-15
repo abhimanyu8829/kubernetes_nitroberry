@@ -11,22 +11,32 @@ metadata:
 apiVersion: v1
 kind: Namespace
 metadata:
-  name: users-namespace
+  name: cockpit-namespace
 ---
 apiVersion: v1
 kind: Namespace
 metadata:
-  name: orders-namespace
+  name: messenger-namespace
 ---
 apiVersion: v1
 kind: Namespace
 metadata:
-  name: products-namespace
+  name: social-namespace
 ---
 apiVersion: v1
 kind: Namespace
 metadata:
-  name: notify-namespace
+  name: task-namespace
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: vault-namespace
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: workflow-namespace
 ---
 apiVersion: v1
 kind: Namespace

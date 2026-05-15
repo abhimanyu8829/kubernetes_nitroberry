@@ -1,7 +1,5 @@
 # =============================================================
-# 11-configmaps.yaml
-# Non-sensitive config for all 5 API services.
-# Sensitive values (DB password, JWT secret) live in 12-secrets.yaml
+# 11-configmaps.yaml - Updated for 7 services
 # =============================================================
 
 apiVersion: v1
@@ -22,75 +20,120 @@ data:
   JWT_ALGORITHM: "HS256"
   LOG_LEVEL: "info"
   ENV: "production"
+  WORKER_ENABLED: "true"
 ---
 apiVersion: v1
 kind: ConfigMap
 metadata:
-  name: users-api-config
-  namespace: users-namespace
+  name: cockpit-api-config
+  namespace: cockpit-namespace
   labels:
-    app: users-api
+    app: cockpit-api
     managed-by: nitroberry
 data:
   PORT: "8080"
-  DB_SCHEMA: "users"
+  DB_SCHEMA: "cockpit"
   DB_HOST: "postgres-service.database-namespace.svc.cluster.local"
   DB_PORT: "5432"
   DB_NAME: "postgres"
   DB_USER: "postgres"
   LOG_LEVEL: "info"
   ENV: "production"
+  WORKER_ENABLED: "true"
 ---
 apiVersion: v1
 kind: ConfigMap
 metadata:
-  name: orders-api-config
-  namespace: orders-namespace
+  name: messenger-api-config
+  namespace: messenger-namespace
   labels:
-    app: orders-api
+    app: messenger-api
     managed-by: nitroberry
 data:
   PORT: "8080"
-  DB_SCHEMA: "orders"
+  DB_SCHEMA: "messenger"
   DB_HOST: "postgres-service.database-namespace.svc.cluster.local"
   DB_PORT: "5432"
   DB_NAME: "postgres"
   DB_USER: "postgres"
   LOG_LEVEL: "info"
   ENV: "production"
+  WORKER_ENABLED: "false"
 ---
 apiVersion: v1
 kind: ConfigMap
 metadata:
-  name: products-api-config
-  namespace: products-namespace
+  name: social-api-config
+  namespace: social-namespace
   labels:
-    app: products-api
+    app: social-api
     managed-by: nitroberry
 data:
   PORT: "8080"
-  DB_SCHEMA: "products"
+  DB_SCHEMA: "social"
   DB_HOST: "postgres-service.database-namespace.svc.cluster.local"
   DB_PORT: "5432"
   DB_NAME: "postgres"
   DB_USER: "postgres"
   LOG_LEVEL: "info"
   ENV: "production"
+  WORKER_ENABLED: "true"
 ---
 apiVersion: v1
 kind: ConfigMap
 metadata:
-  name: notify-api-config
-  namespace: notify-namespace
+  name: task-api-config
+  namespace: task-namespace
   labels:
-    app: notify-api
+    app: task-api
     managed-by: nitroberry
 data:
   PORT: "8080"
-  DB_SCHEMA: "notify"
+  DB_SCHEMA: "task"
   DB_HOST: "postgres-service.database-namespace.svc.cluster.local"
   DB_PORT: "5432"
   DB_NAME: "postgres"
   DB_USER: "postgres"
   LOG_LEVEL: "info"
   ENV: "production"
+  WORKER_ENABLED: "true"
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: vault-api-config
+  namespace: vault-namespace
+  labels:
+    app: vault-api
+    managed-by: nitroberry
+data:
+  PORT: "8080"
+  DB_SCHEMA: "vault"
+  DB_HOST: "postgres-service.database-namespace.svc.cluster.local"
+  DB_PORT: "5432"
+  DB_NAME: "postgres"
+  DB_USER: "postgres"
+  LOG_LEVEL: "info"
+  ENV: "production"
+  WORKER_ENABLED: "true"
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: workflow-api-config
+  namespace: workflow-namespace
+  labels:
+    app: workflow-api
+    managed-by: nitroberry
+data:
+  PORT: "8080"
+  DB_SCHEMA: "workflow"
+  DB_HOST: "postgres-service.database-namespace.svc.cluster.local"
+  DB_PORT: "5432"
+  DB_NAME: "postgres"
+  DB_USER: "postgres"
+  LOG_LEVEL: "info"
+  ENV: "production"
+  WORKER_ENABLED: "true"
+
+ 

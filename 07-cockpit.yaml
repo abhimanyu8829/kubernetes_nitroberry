@@ -1,35 +1,54 @@
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: orders-api
-  namespace: orders-namespace
+  name: cockpit-api
+  namespace: cockpit-namespace
+  labels:
+    app: cockpit-api
 spec:
   replicas: 2
   selector:
     matchLabels:
-      app: orders-api
+      app: cockpit-api
   template:
     metadata:
       labels:
-        app: orders-api
+        app: cockpit-api
     spec:
       containers:
       - name: api
-        image: nitroberry/orders-api:latest
+        image: 798701233691.dkr.ecr.ap-south-1.amazonaws.com/nitroberry/cockpit-api:latest
         ports:
         - containerPort: 8080
+        envFrom:
+        - configMapRef:
+            name: cockpit-api-config
         env:
         - name: DATABASE_URL
-          value: "postgres://postgres:nitroberry-secret-password@postgres-service.database-namespace.svc.cluster.local:5432/postgres?options=-csearch_path%3Dorders"
+          valueFrom:
+            secretKeyRef:
+              name: cockpit-api-secrets
+              key: database-url
+      - name: worker
+        image: 798701233691.dkr.ecr.ap-south-1.amazonaws.com/nitroberry/cockpit-worker:latest
+        envFrom:
+        - configMapRef:
+            name: cockpit-api-config
+        env:
+        - name: DATABASE_URL
+          valueFrom:
+            secretKeyRef:
+              name: cockpit-api-secrets
+              key: database-url
 ---
 apiVersion: v1
 kind: Service
 metadata:
-  name: orders-api-service
-  namespace: orders-namespace
+  name: cockpit-api-service
+  namespace: cockpit-namespace
 spec:
   selector:
-    app: orders-api
+    app: cockpit-api
   ports:
   - protocol: TCP
     port: 8080
@@ -38,13 +57,13 @@ spec:
 apiVersion: autoscaling/v2
 kind: HorizontalPodAutoscaler
 metadata:
-  name: orders-api-hpa
-  namespace: orders-namespace
+  name: cockpit-api-hpa
+  namespace: cockpit-namespace
 spec:
   scaleTargetRef:
     apiVersion: apps/v1
     kind: Deployment
-    name: orders-api
+    name: cockpit-api
   minReplicas: 2
   maxReplicas: 10
   metrics:
@@ -58,30 +77,18 @@ spec:
 apiVersion: traefik.io/v1alpha1
 kind: IngressRoute
 metadata:
-  name: orders-api-websecure
-  namespace: orders-namespace
+  name: cockpit-api-websecure
+  namespace: cockpit-namespace
 spec:
   entryPoints:
     - websecure
   routes:
-    - match: Host(`orders.nitroberry.com`) && (PathPrefix(`/health`) || PathPrefix(`/public`))
+    - match: Host(`cockpit.nitroberry.com`)
       kind: Rule
       services:
-        - name: orders-api-service
+        - name: cockpit-api-service
           port: 8080
       middlewares:
-        - name: rate-limit
-          namespace: traefik-ingress
-        - name: security-headers
-          namespace: traefik-ingress
-    - match: Host(`orders.nitroberry.com`)
-      kind: Rule
-      services:
-        - name: orders-api-service
-          port: 8080
-      middlewares:
-        - name: jwt-auth
-          namespace: traefik-ingress
         - name: rate-limit
           namespace: traefik-ingress
         - name: security-headers
@@ -92,12 +99,12 @@ spec:
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
-  name: orders-api-policy
-  namespace: orders-namespace
+  name: cockpit-api-policy
+  namespace: cockpit-namespace
 spec:
   podSelector:
     matchLabels:
-      app: orders-api
+      app: cockpit-api
   policyTypes:
   - Ingress
   - Egress

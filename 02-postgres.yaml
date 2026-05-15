@@ -15,10 +15,12 @@ metadata:
 data:
   init.sql: |
     CREATE SCHEMA IF NOT EXISTS auth;
-    CREATE SCHEMA IF NOT EXISTS users;
-    CREATE SCHEMA IF NOT EXISTS orders;
-    CREATE SCHEMA IF NOT EXISTS products;
-    CREATE SCHEMA IF NOT EXISTS notify;
+    CREATE SCHEMA IF NOT EXISTS cockpit;
+    CREATE SCHEMA IF NOT EXISTS messenger;
+    CREATE SCHEMA IF NOT EXISTS social;
+    CREATE SCHEMA IF NOT EXISTS task;
+    CREATE SCHEMA IF NOT EXISTS vault;
+    CREATE SCHEMA IF NOT EXISTS workflow;
 ---
 apiVersion: apps/v1
 kind: StatefulSet
@@ -27,7 +29,7 @@ metadata:
   namespace: database-namespace
 spec:
   serviceName: "postgres-service"
-  replicas: 1
+  replicas: 2
   selector:
     matchLabels:
       app: postgres
@@ -98,16 +100,22 @@ spec:
           kubernetes.io/metadata.name: auth-namespace
     - namespaceSelector:
         matchLabels:
-          kubernetes.io/metadata.name: users-namespace
+          kubernetes.io/metadata.name: cockpit-namespace
     - namespaceSelector:
         matchLabels:
-          kubernetes.io/metadata.name: orders-namespace
+          kubernetes.io/metadata.name: messenger-namespace
     - namespaceSelector:
         matchLabels:
-          kubernetes.io/metadata.name: products-namespace
+          kubernetes.io/metadata.name: social-namespace
     - namespaceSelector:
         matchLabels:
-          kubernetes.io/metadata.name: notify-namespace
+          kubernetes.io/metadata.name: task-namespace
+    - namespaceSelector:
+        matchLabels:
+          kubernetes.io/metadata.name: vault-namespace
+    - namespaceSelector:
+        matchLabels:
+          kubernetes.io/metadata.name: workflow-namespace
     ports:
     - protocol: TCP
       port: 5432
