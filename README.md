@@ -32,17 +32,65 @@ ArgoCD runs inside the cluster, pulls the OCI Helm chart directly from ECR, and 
 
 ---
 
-## 📐 Full Architecture Diagram
-The diagram above visualises the complete **GitOps flow**:
-1. **Developer pushes code** → GitHub Actions builds Docker image.
-2. **CI pushes the image** and **updates the Helm chart** (new `Chart.yaml` version, `appVersion` set to the image tag).
-3. **Helm chart is stored as OCI** in the same ECR registry.
-4. **ArgoCD pulls the OCI chart** (requires an ECR token).
-5. **CronJob `ecr-token-refresh`** runs every 8 h, regenerates the AWS token and updates two secrets:
-   - `ecr-regcred` (used by all Pods for image pulls)
-   - `ecr-repo-creds` (used by ArgoCD to pull the Helm chart).  
-   This eliminates the 12‑hour token expiry problem.
-6. **ArgoCD syncs** → **Rolling Update** of all services.
+## 📐 Full Architecture Diagram & GitOps Flow
+
+Below is the complete **GitOps workflow** detailing how code travels from a developer's machine to the production Kubernetes cluster.
+
+```mermaid
+flowchart TD
+    %% Define Nodes
+    Dev["👨‍💻 Developer"]
+    Git["🐙 GitHub Repository\n(main branch)"]
+    
+    subgraph CI ["GitHub Actions (CI Pipeline)"]
+        Build["🔨 Build Docker Images"]
+        Test["✅ Run Tests & Lint"]
+        Bump["📈 Increment Chart Version\n(Chart.yaml)"]
+    end
+    
+    subgraph Registry ["AWS ECR (Mumbai)"]
+        DockerRepo["📦 Docker Image Registry\n(nitroberry/*-api)"]
+        HelmRepo["☸️ OCI Helm Registry\n(nitroberry/helm)"]
+    end
+    
+    subgraph K8s ["Kubernetes Production Cluster"]
+        ArgoCD["🦑 ArgoCD\n(GitOps Controller)"]
+        CronJob["⏱️ ecr-helper CronJob\n(Runs every 8h)"]
+        Traefik["🚦 Traefik v3\n(Ingress Controller)"]
+        Services["⚙️ 7 Microservices\n(API + Worker Pods)"]
+    end
+
+    %% Flow Definitions
+    Dev -- "1. Push Code" --> Git
+    Git -- "2. Trigger Action" --> Build
+    Build --> Test
+    Test --> Bump
+    
+    Build -- "3. Push Tagged Images" --> DockerRepo
+    Bump -- "4. Package & Push OCI Chart" --> HelmRepo
+    
+    ArgoCD -- "5. Polls for New Chart" --> HelmRepo
+    ArgoCD -- "6. Applies Changes" --> Services
+    
+    CronJob -- "7. Requests Fresh Token" --> Registry
+    CronJob -- "8. Updates Secrets" --> ArgoCD
+    CronJob -- "8. Updates Secrets" --> Services
+    
+    Traefik -- "9. Routes Traffic" --> Services
+```
+
+### The Deployment Process:
+1. **Developer pushes code** → to the `main` branch.
+2. **GitHub Actions** triggers:
+   - Builds the Docker images.
+   - Pushes the images with a new immutable tag (`0.0.0.x`).
+   - Updates the Helm chart's `appVersion` and increments the `version` in `Chart.yaml`.
+   - Packages the Helm chart and pushes it as an **OCI artifact** to ECR.
+3. **AWS ECR** securely stores both the Docker images and the Helm chart.
+4. **ArgoCD** continuously polls the ECR OCI registry. When it detects the new chart version, it **auto‑syncs**.
+5. **ArgoCD applies** the updated manifests, triggering a zero-downtime **Rolling Update** across the cluster.
+6. The **CronJob `ecr-token-refresh`** runs every 8 h, regenerating the AWS token and updating the secrets for both ArgoCD (`ecr-repo-creds`) and the Pods (`ecr-regcred`). This completely eliminates the 12‑hour AWS token expiry issue.
+
 
 ---
 
@@ -58,7 +106,39 @@ The diagram above visualises the complete **GitOps flow**:
 
 ---
 
-## 🚀 Step‑by‑Step Deployment Guide
+## 🚀 Initial Cluster Setup (ArgoCD & MetalLB)
+### 1️⃣ Install ArgoCD
+```bash
+kubectl create namespace argocd
+kubectl apply -n argocd -f https://raw.githubusercontent.com/argoproj/argo-cd/stable/manifests/install.yaml
+# Verify all pods are Running
+kubectl get pods -n argocd
+```
+> **Optional**: expose the ArgoCD UI via a LoadBalancer or port‑forward for first‑time access.
+
+### 2️⃣ Install MetalLB (controller + CRDs)
+```bash
+# Install MetalLB namespace and components
+kubectl apply -f https://raw.githubusercontent.com/metallb/metallb/v0.13.10/manifests/namespace.yaml
+kubectl apply -f https://raw.githubusercontent.com/metallb/metallb/v0.13.10/manifests/metallb.yaml
+# Wait for metallb-system pods to be Ready
+kubectl get pods -n metallb-system
+```
+After the controller is running, apply **only** the IP‑pool configuration (`01-metallb.yaml`). This file does **not** install MetalLB – it merely defines the address range that MetalLB will hand out.
+
+### 3️⃣ Create AWS ECR Repositories (First Time Setup)
+You need an ECR repository for each API and Worker, plus one for the Helm chart. Run this for each:
+```bash
+aws ecr create-repository --repository-name nitroberry/auth-api --region ap-south-1
+aws ecr create-repository --repository-name nitroberry/auth-worker --region ap-south-1
+# ... repeat for cockpit, messenger, social, task, vault, workflow ...
+# Create the Helm chart repository:
+aws ecr create-repository --repository-name nitroberry/helm --region ap-south-1
+```
+
+---
+
+## 📦 Step‑by‑Step Deployment Guide
 1. **Create the AWS credential secret** (run once):
    ```bash
    kubectl create secret generic ecr-regcred \
@@ -67,27 +147,37 @@ The diagram above visualises the complete **GitOps flow**:
      --docker-password=$(aws ecr get-login-password --region ap-south-1) \
      -n argocd
    ```
-2. **Deploy the ECR token refresh CronJob** (this also creates the ArgoCD repository secret):
+2. **Deploy the ECR token refresh CronJob** (creates the ArgoCD repository secret as well):
    ```bash
    kubectl apply -f charts/nitroberry/templates/ecr-helper.yaml
    ```
-3. **Apply core infrastructure** – namespaces, MetalLB, PostgreSQL, Traefik, OPA Gatekeeper:
+3. **Apply core infrastructure** – namespaces, MetalLB IP pool, PostgreSQL, Traefik, OPA Gatekeeper:
    ```bash
    kubectl apply -f 00-namespaces.yaml
-   kubectl apply -f 01-metallb.yaml
+   kubectl apply -f 01-metallb.yaml   # IP‑pool only – MetalLB already installed above
    kubectl apply -f 02-postgres.yaml
    kubectl apply -f 03-traefik-rbac.yaml
    kubectl apply -f 04-traefik-install.yaml
    kubectl apply -f 05-traefik-middlewares.yaml
    ```
-4. **Configure `values.yaml`**:
-   * Replace **all** `REPLACE_WITH_…` placeholders (DB passwords, JWT secret, AWS keys, S3 bucket).  
+4. **Configure First-Time Secrets (`12-secrets.yaml`)**:
+   Before deploying, open `12-secrets.yaml` and replace all placeholders:
+   - Generate a strong `postgres-password`.
+   - Update `db-password` in every service to match.
+   - Update `database-url` in every service with the new password.
+   - Generate a `jwt-secret` (`openssl rand -base64 32`).
+   - Set AWS keys for the database backups.
+   ```bash
+   kubectl apply -f 12-secrets.yaml
+   ```
+5. **Configure `values.yaml`**:
+   * Replace **all** `REPLACE_WITH_…` placeholders (AWS keys).  
    * Update the `host` fields under each service to your real domain (e.g. `auth.mycompany.com`).
    * Adjust MetalLB IP range in `01-metallb.yaml` to match your LAN/subnet.
-5. **Commit the updated `values.yaml`** and push to `main`. This triggers the CI pipeline.
-6. **CI pipeline** builds Docker images, pushes them, bumps the chart version, pushes the chart to ECR, and pushes the version bump back to Git (requires `GH_PAT`).
-7. **ArgoCD automatically detects the new chart version** (because `argocd-app.yaml` points at `oci://…` with `automated` sync) and rolls out a **RollingUpdate** of all services.
-8. **Verify**:
+6. **Commit the updated `values.yaml`** and push to `main`. This triggers the CI pipeline.
+7. **CI pipeline** builds Docker images, pushes them, bumps the chart version, pushes the chart to ECR, and pushes the version bump back to Git (requires `GH_PAT`).
+8. **ArgoCD automatically detects the new chart version** (because `argocd-app.yaml` points at `oci://…` with `automated` sync) and rolls out a **RollingUpdate** of all services.
+9. **Verify**:
    ```bash
    kubectl get pods -A
    argocd app get nitroberry   # should show Health=Healthy, Sync=Synced
