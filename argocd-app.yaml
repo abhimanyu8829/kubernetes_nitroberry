@@ -8,12 +8,13 @@ metadata:
 spec:
   project: default
   source:
-    repoURL: https://github.com/abhimanyu8829/kubernetes_nitroberry
-    targetRevision: main
-    path: ./
-    directory:
-      recurse: true
-      jsonnet: {}
+    repoURL: oci://798701233691.dkr.ecr.ap-south-1.amazonaws.com
+    chart: nitroberry
+    targetRevision: 1.0.0
+    helm:
+      valueFiles:
+        - values.yaml
+
   destination:
     server: https://kubernetes.default.svc
     namespace: traefik-ingress

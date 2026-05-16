@@ -1,0 +1,6 @@
+apiVersion: v2
+name: nitroberry
+description: A Helm chart for Nitroberry microservices on Kubernetes
+type: application
+version: 1.0.0
+appVersion: "1.0.0"

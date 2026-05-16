@@ -1,0 +1,182 @@
+{{- range $key, $service := .Values.services }}
+{{- if $service.enabled }}
+---
+# ConfigMap for {{ $service.name }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ $service.name }}-config
+  namespace: {{ $service.namespace }}
+data:
+  PORT: {{ $service.port | quote }}
+  DB_SCHEMA: {{ $key | quote }}
+  DB_HOST: {{ $.Values.database.host | quote }}
+  DB_PORT: {{ $.Values.database.port | quote }}
+  DB_NAME: {{ $.Values.database.name | quote }}
+  DB_USER: {{ $.Values.database.user | quote }}
+  LOG_LEVEL: "info"
+  ENV: "production"
+  WORKER_ENABLED: {{ $service.worker_enabled | quote }}
+  {{- if eq $key "auth" }}
+  JWT_ALGORITHM: "HS256"
+  {{- end }}
+
+---
+# Secret for {{ $service.name }}
+apiVersion: v1
+kind: Secret
+metadata:
+  name: {{ $service.name }}-secrets
+  namespace: {{ $service.namespace }}
+type: Opaque
+stringData:
+  db-password: {{ $.Values.database.password | quote }}
+  database-url: "postgres://{{ $.Values.database.user }}:{{ $.Values.database.password }}@{{ $.Values.database.host }}:{{ $.Values.database.port }}/{{ $.Values.database.name }}?options=-csearch_path%3D{{ $key }}"
+  {{- if eq $key "auth" }}
+  jwt-secret: "REPLACE_WITH_RANDOM_256BIT_SECRET"
+  {{- end }}
+
+---
+# Deployment for {{ $service.name }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ $service.name }}
+  namespace: {{ $service.namespace }}
+  labels:
+    app: {{ $service.name }}
+spec:
+  replicas: {{ $service.replicas }}
+  selector:
+    matchLabels:
+      app: {{ $service.name }}
+  template:
+    metadata:
+      labels:
+        app: {{ $service.name }}
+    spec:
+      {{- with $.Values.global.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      containers:
+      - name: api
+        image: "{{ $.Values.global.registry }}/{{ $service.image }}:latest"
+        ports:
+        - containerPort: {{ $service.port }}
+        envFrom:
+        - configMapRef:
+            name: {{ $service.name }}-config
+        env:
+        - name: DATABASE_URL
+          valueFrom:
+            secretKeyRef:
+              name: {{ $service.name }}-secrets
+              key: database-url
+      - name: worker
+        image: "{{ $.Values.global.registry }}/{{ $service.worker_image }}:latest"
+        envFrom:
+        - configMapRef:
+            name: {{ $service.name }}-config
+        env:
+        - name: DATABASE_URL
+          valueFrom:
+            secretKeyRef:
+              name: {{ $service.name }}-secrets
+              key: database-url
+
+---
+# Service for {{ $service.name }}
+apiVersion: v1
+kind: IngressRoute
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ $service.name }}-service
+  namespace: {{ $service.namespace }}
+spec:
+  selector:
+    app: {{ $service.name }}
+  ports:
+  - protocol: TCP
+    port: {{ $service.port }}
+    targetPort: {{ $service.port }}
+
+---
+# IngressRoute (Traefik) for {{ $service.name }}
+apiVersion: traefik.io/v1alpha1
+kind: IngressRoute
+metadata:
+  name: {{ $service.name }}-websecure
+  namespace: {{ $service.namespace }}
+spec:
+  entryPoints:
+    - websecure
+  routes:
+    - match: Host(`{{ $service.host }}`)
+      kind: Rule
+      services:
+        - name: {{ $service.name }}-service
+          port: {{ $service.port }}
+      middlewares:
+        - name: rate-limit
+          namespace: traefik-ingress
+        - name: security-headers
+          namespace: traefik-ingress
+  tls:
+    certResolver: {{ $.Values.traefik.certResolver }}
+
+---
+# HPA for {{ $service.name }}
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: {{ $service.name }}-hpa
+  namespace: {{ $service.namespace }}
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: {{ $service.name }}
+  minReplicas: {{ $service.replicas }}
+  maxReplicas: 10
+  metrics:
+  - type: Resource
+    resource:
+      name: cpu
+      target:
+        type: Utilization
+        averageUtilization: 70
+
+---
+# NetworkPolicy for {{ $service.name }}
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ $service.name }}-policy
+  namespace: {{ $service.namespace }}
+spec:
+  podSelector:
+    matchLabels:
+      app: {{ $service.name }}
+  policyTypes:
+  - Ingress
+  - Egress
+  ingress:
+  - from:
+    - namespaceSelector:
+        matchLabels:
+          kubernetes.io/metadata.name: traefik-ingress
+    ports:
+    - protocol: TCP
+      port: {{ $service.port }}
+  egress:
+  - to:
+    - namespaceSelector:
+        matchLabels:
+          kubernetes.io/metadata.name: database-namespace
+    ports:
+    - protocol: TCP
+      port: {{ $.Values.database.port }}
+{{- end }}
+{{- end }}

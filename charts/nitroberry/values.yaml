@@ -1,0 +1,101 @@
+global:
+  registry: 798701233691.dkr.ecr.ap-south-1.amazonaws.com
+  imagePullSecrets: 
+    - name: ecr-regcred
+
+aws:
+  region: ap-south-1
+  account_id: "798701233691"
+  # These should ideally be set via external secrets or manual creation, 
+  # but for the cronjob helper we need them.
+  access_key_id: "REPLACE_WITH_AWS_ACCESS_KEY"
+  secret_access_key: "REPLACE_WITH_AWS_SECRET_KEY"
+
+services:
+  auth:
+    enabled: true
+    name: auth-api
+    namespace: auth-namespace
+    host: auth.nitroberry.com
+    replicas: 2
+    worker_enabled: "true"
+    image: nitroberry/auth-api
+    worker_image: nitroberry/auth-worker
+    port: 8080
+
+  cockpit:
+    enabled: true
+    name: cockpit-api
+    namespace: cockpit-namespace
+    host: cockpit.nitroberry.com
+    replicas: 2
+    worker_enabled: "true"
+    image: nitroberry/cockpit-api
+    worker_image: nitroberry/cockpit-worker
+    port: 8080
+
+  messenger:
+    enabled: true
+    name: messenger-api
+    namespace: messenger-namespace
+    host: messenger.nitroberry.com
+    replicas: 2
+    worker_enabled: "false"
+    image: nitroberry/messenger-api
+    worker_image: nitroberry/messenger-worker
+    port: 8080
+
+  social:
+    enabled: true
+    name: social-api
+    namespace: social-namespace
+    host: social.nitroberry.com
+    replicas: 2
+    worker_enabled: "true"
+    image: nitroberry/social-api
+    worker_image: nitroberry/social-worker
+    port: 8080
+
+  task:
+    enabled: true
+    name: task-api
+    namespace: task-namespace
+    host: task.nitroberry.com
+    replicas: 2
+    worker_enabled: "true"
+    image: nitroberry/task-api
+    worker_image: nitroberry/task-worker
+    port: 8080
+
+  vault:
+    enabled: true
+    name: vault-api
+    namespace: vault-namespace
+    host: vault.nitroberry.com
+    replicas: 2
+    worker_enabled: "true"
+    image: nitroberry/vault-api
+    worker_image: nitroberry/vault-worker
+    port: 8080
+
+  workflow:
+    enabled: true
+    name: workflow-api
+    namespace: workflow-namespace
+    host: workflow.nitroberry.com
+    replicas: 2
+    worker_enabled: "true"
+    image: nitroberry/workflow-api
+    worker_image: nitroberry/workflow-worker
+    port: 8080
+
+database:
+  host: postgres-service.database-namespace.svc.cluster.local
+  port: 5432
+  name: postgres
+  user: postgres
+  password: "REPLACE_WITH_STRONG_PASSWORD"
+
+traefik:
+  ingressClass: traefik
+  certResolver: myresolver

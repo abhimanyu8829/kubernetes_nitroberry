@@ -1,0 +1,84 @@
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: ecr-token-refresh-sa
+  namespace: argocd # Or any namespace where you want to run it
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: ecr-token-refresh-role
+rules:
+- apiGroups: [""]
+  resources: ["secrets"]
+  verbs: ["get", "create", "patch", "delete"]
+- apiGroups: [""]
+  resources: ["namespaces"]
+  verbs: ["list", "get"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: ecr-token-refresh-binding
+subjects:
+- kind: ServiceAccount
+  name: ecr-token-refresh-sa
+  namespace: argocd
+roleRef:
+  kind: ClusterRole
+  name: ecr-token-refresh-role
+  apiGroup: rbac.authorization.k8s.io
+---
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: ecr-token-refresh
+  namespace: argocd
+spec:
+  schedule: "0 */8 * * *" # Every 8 hours
+  jobTemplate:
+    spec:
+      template:
+        spec:
+          serviceAccountName: ecr-token-refresh-sa
+          containers:
+          - name: ecr-token-refresh
+            image: amazon/aws-cli:latest
+            command:
+            - /bin/sh
+            - -c
+            - |
+              TOKEN=$(aws ecr get-login-password --region {{ .Values.aws.region }})
+              
+              # 1. Refresh ecr-regcred in all namespaces for image pulling
+              for ns in $(kubectl get namespaces -o jsonpath='{.items[*].metadata.name}'); do
+                if [ "$ns" != "kube-system" ] && [ "$ns" != "kube-public" ] && [ "$ns" != "kube-node-lease" ]; then
+                  echo "Refreshing ECR token in namespace $ns"
+                  kubectl delete secret ecr-regcred -n $ns --ignore-not-found
+                  kubectl create secret docker-registry ecr-regcred \
+                    --docker-server={{ .Values.global.registry }} \
+                    --docker-username=AWS \
+                    --docker-password="${TOKEN}" \
+                    -n $ns
+                fi
+              done
+
+              # 2. Refresh ArgoCD Repository Secret for Helm OCI pulling
+              echo "Refreshing ArgoCD Repository secret"
+              kubectl patch secret ecr-repo-creds -n argocd --type='merge' -p "{\"stringData\":{\"password\":\"${TOKEN}\"}}" || \
+              kubectl create secret generic ecr-repo-creds -n argocd \
+                --from-literal=url={{ .Values.global.registry }} \
+                --from-literal=username=AWS \
+                --from-literal=password="${TOKEN}" \
+                --from-literal=enableOCI=true \
+                --from-literal=type=helm
+              
+              kubectl label secret ecr-repo-creds -n argocd argocd.argoproj.io/secret-type=repository --overwrite
+            env:
+            - name: AWS_ACCESS_KEY_ID
+              value: {{ .Values.aws.access_key_id | quote }}
+            - name: AWS_SECRET_ACCESS_KEY
+              value: {{ .Values.aws.secret_access_key | quote }}
+            - name: AWS_DEFAULT_REGION
+              value: {{ .Values.aws.region | quote }}
+          restartPolicy: OnFailure
